@@ -9,6 +9,8 @@ from nerf.utils import *
 # torch.autograd.set_detect_anomaly(True)
 
 if __name__ == '__main__':
+    torch.cuda.empty_cache() # I add this command {Ariel}
+    print("#### Clean cuda cache #####")
     # See https://stackoverflow.com/questions/27433316/how-to-get-argparse-to-read-arguments-from-a-file-with-an-option-rather-than-pre
     class LoadFromFile (argparse.Action):
         def __call__ (self, parser, namespace, values, option_string = None):
@@ -392,6 +394,10 @@ if __name__ == '__main__':
         if 'clip' in opt.guidance:
             from guidance.clip_utils import CLIP
             guidance['clip'] = CLIP(device)
+
+        # Add out guidance
+        if 'audio' in opt.guidance:
+            pass
 
         trainer = Trainer(' '.join(sys.argv), 'df', opt, model, guidance, device=device, workspace=opt.workspace, optimizer=optimizer, ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, use_checkpoint=opt.ckpt, scheduler_update_every_step=True)
 
