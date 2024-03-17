@@ -26,68 +26,55 @@ def seed_everything(seed):
     #torch.backends.cudnn.deterministic = True
     #torch.backends.cudnn.benchmark = True
 
-class StableDiffusion(nn.Module):
+class AudioStableDiffusion(nn.Module):
     def __init__(self, device, fp16, vram_O, sd_version='2.1', hf_key=None, t_range=[0.02, 0.98]):
         super().__init__()
 
         self.device = device
         self.sd_version = sd_version
-
-        print(f'[INFO] loading stable diffusion...')
-
-        if hf_key is not None:
-            print(f'[INFO] using hugging face custom model key: {hf_key}')
-            model_key = hf_key
-        elif self.sd_version == '2.1':
-            model_key = "stabilityai/stable-diffusion-2-1-base"
-        elif self.sd_version == '2.0':
-            model_key = "stabilityai/stable-diffusion-2-base"
-        elif self.sd_version == '1.5':
-            model_key = "runwayml/stable-diffusion-v1-5"
-        elif self.sd_version == 'audio':
-            model_key = "stabilityai/stable-diffusion-2-1-unclip"
-        else:
-            raise ValueError(f'Stable-diffusion version {self.sd_version} not supported.')
+        model_key = "stabilityai/stable-diffusion-2-1-unclip"
+        print(f'[INFO] loading Audio stable diffusion...')
 
         self.precision_t = torch.float16 if fp16 else torch.float32
 
         # Create model
         # pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=self.precision_t)
-        pipe = StableUnCLIPImg2ImgPipeline.from_pretrained("stabilityai/stable-diffusion-2-1-unclip", torch_dtype=torch.float16).to(device)
+        pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(model_key, torch_dtype=torch.float16).to(device)
+        self.audio_model = ib.imagebind_huge(pretrained=True).eval().to(device)
+        self.vae = pipe.vae
+        self.tokenizer = pipe.tokenizer
+        self.text_encoder = pipe.text_encoder
+        self.unet = pipe.unet
 
-        # if vram_O:
-        #     pipe.enable_sequential_cpu_offload()
-        #     pipe.enable_vae_slicing()
-        #     pipe.unet.to(memory_format=torch.channels_last)
-        #     pipe.enable_attention_slicing(1)
-        #     # pipe.enable_model_cpu_offload()
-        # else:
-        #     pipe.to(device)
+        self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.precision_t)
 
-        # self.vae = pipe.vae
-        # self.tokenizer = pipe.tokenizer
-        # self.text_encoder = pipe.text_encoder
-        # self.unet = pipe.unet
+        del pipe
 
-        # self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.precision_t)
+        self.num_train_timesteps = self.scheduler.config.num_train_timesteps
+        self.min_step = int(self.num_train_timesteps * t_range[0])
+        self.max_step = int(self.num_train_timesteps * t_range[1])
+        self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
 
-        # del pipe
-
-        # self.num_train_timesteps = self.scheduler.config.num_train_timesteps
-        # self.min_step = int(self.num_train_timesteps * t_range[0])
-        # self.max_step = int(self.num_train_timesteps * t_range[1])
-        # self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
-
-        # print(f'[INFO] loaded stable diffusion!')
+        print(f'[INFO] loaded stable diffusion!')
 
     @torch.no_grad()
     def get_text_embeds(self, prompt):
-        # prompt: [str]
-
-        inputs = self.tokenizer(prompt, padding='max_length', max_length=self.tokenizer.model_max_length, return_tensors='pt')
-        embeddings = self.text_encoder(inputs.input_ids.to(self.device))[0]
-
+        """
+        prompt: [str] Text prompt
+        """
+        embeddings = self.audio_model.forward({ib.ModalityType.TEXT: ib.load_and_transform_text([prompt], device),}, normalize=False)
+        text_embeddings = embeddings[ib.ModalityType.TEXT]
+        return text_embeddings
+    
+    @torch.no_grad()
+    def get_audio_embeds(self, prompt):
+        """
+        prompt: [str] audio path
+        """
+        embeddings = self.audio_model.forward({ib.ModalityType.AUDIO: ib.load_and_transform_audio_data(prompt, self.device),})
+        embeddings = embeddings[ib.ModalityType.AUDIO]
         return embeddings
+        
 
 
     def train_step(self, text_embeddings, pred_rgb, guidance_scale=100, as_latent=False, grad_scale=1,
@@ -344,9 +331,9 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
 
-    sd = StableDiffusion(device, opt.fp16, opt.vram_O, opt.sd_version, opt.hf_key)
+    audio = AudioStableDiffusion(device, opt.fp16, opt.vram_O, opt.sd_version, opt.hf_key)
 
-    imgs = sd.prompt_to_img(opt.prompt, opt.negative, opt.H, opt.W, opt.steps)
+    imgs = audio.prompt_to_img(opt.prompt, opt.negative, opt.H, opt.W, opt.steps)
 
     # visualize image
     plt.imshow(imgs[0])
