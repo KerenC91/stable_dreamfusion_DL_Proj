@@ -15,6 +15,11 @@ from torchvision.utils import save_image
 from torch.cuda.amp import custom_bwd, custom_fwd
 from .perpneg_utils import weighted_perpendicular_aggregator
 
+################# anything2image - start ###############
+import anything2image.imagebind as ib
+from diffusers import StableUnCLIPImg2ImgPipeline
+################# anything2image - end #################
+
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -46,7 +51,13 @@ class StableDiffusion(nn.Module):
         self.precision_t = torch.float16 if fp16 else torch.float32
 
         # Create model
-        pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=self.precision_t)
+        #pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=self.precision_t)
+        ################# anything2image - start ###############
+
+        pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-2-1-unclip", torch_dtype=torch.float16
+        )
+        ################# anything2image - end #################
 
         if vram_O:
             pipe.enable_sequential_cpu_offload()
@@ -56,11 +67,12 @@ class StableDiffusion(nn.Module):
             # pipe.enable_model_cpu_offload()
         else:
             pipe.to(device)
-
+            
         self.vae = pipe.vae
         self.tokenizer = pipe.tokenizer
         self.text_encoder = pipe.text_encoder
         self.unet = pipe.unet
+        self.a2i_model = ib.imagebind_huge(pretrained=True)
 
         self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.precision_t)
 
@@ -77,11 +89,13 @@ class StableDiffusion(nn.Module):
     def get_text_embeds(self, prompt):
         # prompt: [str]
 
-        inputs = self.tokenizer(prompt, padding='max_length', max_length=self.tokenizer.model_max_length, return_tensors='pt')
-        embeddings = self.text_encoder(inputs.input_ids.to(self.device))[0]
+        # inputs = self.tokenizer(prompt, padding='max_length', max_length=self.tokenizer.model_max_length, return_tensors='pt')
+        # embeddings = self.text_encoder(inputs.input_ids.to(self.device))[0]
 
-        return embeddings
-
+        #embeddings['audio'].shape = torch.Size([1, 1024])
+        #embeddings.keys() = dict_keys(['audio'])
+        return prompt
+    
 
     def train_step(self, text_embeddings, pred_rgb, guidance_scale=100, as_latent=False, grad_scale=1,
                    save_guidance_path:Path=None):
@@ -97,6 +111,14 @@ class StableDiffusion(nn.Module):
         # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
         t = torch.randint(self.min_step, self.max_step + 1, (latents.shape[0],), dtype=torch.long, device=self.device)
 
+        ################# anything2image - start ###############
+        pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-2-1-unclip", torch_dtype=torch.float16
+        )
+        pipe = pipe.to(device)
+        
+        model = ib.imagebind_huge(pretrained=True)
+        ################# anything2image - end #################
         # predict the noise residual with unet, NO grad!
         with torch.no_grad():
             # add noise
@@ -105,6 +127,14 @@ class StableDiffusion(nn.Module):
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
             tt = torch.cat([t] * 2)
+            ################# anything2image - start ###############
+            audio_paths=["audio_files/bird_audio.wav"]
+            embeddings = model.forward({
+                ib.ModalityType.AUDIO: ib.load_and_transform_audio_data(audio_paths, device),
+            })
+            embeddings = embeddings[ib.ModalityType.AUDIO]
+            images = pipe(prompt='a painting', image_embeds=embeddings.half()).images
+            ################# anything2image - end #################
             noise_pred = self.unet(latent_model_input, tt, encoder_hidden_states=text_embeddings).sample
 
             # perform guidance (high scale from paper!)
