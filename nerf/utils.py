@@ -359,7 +359,7 @@ class Trainer(object):
             if 'audio' in self.guidance:
                 self.embeddings['audio']['default'] = self.guidance['audio'].get_audio_embeds([self.opt.audio])
                 for d in ['front', 'side', 'back']:
-                    self.embeddings['audio'][d] = self.guidance['SD'].get_text_embeds([f"{self.opt.text}, {d} view"])
+                    self.embeddings['audio'][d] = self.guidance['audio'].get_text_embeds([f"{self.opt.text}, {d} view"])
 
             if 'SD' in self.guidance:
                 self.embeddings['SD']['default'] = self.guidance['SD'].get_text_embeds([self.opt.text])

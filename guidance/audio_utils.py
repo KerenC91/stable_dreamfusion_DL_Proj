@@ -55,6 +55,8 @@ class AudioStableDiffusion(nn.Module):
         self.max_step = int(self.num_train_timesteps * t_range[1])
         self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
 
+
+
         print(f'[INFO] loaded stable diffusion!')
 
     @torch.no_grad()
@@ -62,7 +64,7 @@ class AudioStableDiffusion(nn.Module):
         """
         prompt: [str] Text prompt
         """
-        embeddings = self.audio_model.forward({ib.ModalityType.TEXT: ib.load_and_transform_text([prompt], device),}, normalize=False)
+        embeddings = self.audio_model.forward({ib.ModalityType.TEXT: ib.load_and_transform_text([prompt], self.device),}, normalize=False)
         text_embeddings = embeddings[ib.ModalityType.TEXT]
         return text_embeddings
     
