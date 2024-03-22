@@ -39,7 +39,7 @@ class AudioStableDiffusion(nn.Module):
 
         # Create model
         # pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=self.precision_t)
-        pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(model_key, torch_dtype=torch.float16).to(device)
+        pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(model_key, torch_dtype=self.precision_t).to(device)
         self.audio_model = ib.imagebind_huge(pretrained=True).eval().to(device)
         self.vae = pipe.vae
         self.tokenizer = pipe.tokenizer
