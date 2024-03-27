@@ -205,7 +205,7 @@ if __name__ == '__main__':
                 opt.lambda_3d_normal_smooth = 10
         else:
             # use stable-diffusion when providing both text and image
-            opt.guidance = ['SD', 'clip']
+            opt.guidance = ['SD', 'clip']#'audio' instead of 'SD'
             
             if not opt.dont_override_stuff:
                 opt.guidance_scale = 10

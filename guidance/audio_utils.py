@@ -19,6 +19,9 @@ from torchvision.utils import save_image
 from torch.cuda.amp import custom_bwd, custom_fwd
 from .perpneg_utils import weighted_perpendicular_aggregator
 
+import PIL.Image
+from typing import Any, Callable, Dict, List, Optional, Union
+
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -38,13 +41,15 @@ class AudioStableDiffusion(nn.Module):
         self.precision_t = torch.float16 if fp16 else torch.float32
 
         # Create model
-        # pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=self.precision_t)
-        pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(model_key, torch_dtype=torch.float16).to(device)
+        pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(model_key, torch_dtype=self.precision_t).to(device)
         self.audio_model = ib.imagebind_huge(pretrained=True).eval().to(device)
         self.vae = pipe.vae
         self.tokenizer = pipe.tokenizer
         self.text_encoder = pipe.text_encoder
         self.unet = pipe.unet
+        self.image_encoder = pipe.image_encoder
+        self.noise_image_embeddings = pipe.noise_image_embeddings
+        self.feature_extractor = pipe.feature_extractor
 
         self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.precision_t)
 
@@ -59,27 +64,91 @@ class AudioStableDiffusion(nn.Module):
 
         print(f'[INFO] loaded stable diffusion!')
 
+    def _encode_image(
+        self,
+        image_embeds,
+        image: Union[torch.FloatTensor, PIL.Image.Image] = None,
+        batch_size: Optional[int] = 1,
+        num_images_per_prompt: Optional[int] = 1,
+        do_classifier_free_guidance: Optional[bool] = True,
+        noise_level: int = 0,
+        generator: Optional[torch.Generator] = None,
+    ):
+        device = self.device
+        batch_size = batch_size * num_images_per_prompt
+        
+        dtype = next(self.image_encoder.parameters()).dtype
+    
+        if isinstance(image, PIL.Image.Image):
+            # the image embedding should repeated so it matches the total batch size of the prompt
+            repeat_by = batch_size
+        else:
+            # assume the image input is already properly batched and just needs to be repeated so
+            # it matches the num_images_per_prompt.
+            #
+            # NOTE(will) this is probably missing a few number of side cases. I.e. batched/non-batched
+            # `image_embeds`. If those happen to be common use cases, let's think harder about
+            # what the expected dimensions of inputs should be and how we handle the encoding.
+            repeat_by = num_images_per_prompt
+    
+        if image_embeds is None:
+            if not isinstance(image, torch.Tensor):
+                image = self.feature_extractor(images=image, return_tensors="pt").pixel_values
+    
+            image = image.to(device=device, dtype=dtype)
+            image_embeds = self.image_encoder(image).image_embeds
+    
+        image_embeds = self.noise_image_embeddings(
+            image_embeds=image_embeds,
+            noise_level=noise_level,
+            generator=generator,
+        )
+    
+        # duplicate image embeddings for each generation per prompt, using mps friendly method
+        image_embeds = image_embeds.unsqueeze(1)
+        bs_embed, seq_len, _ = image_embeds.shape
+        image_embeds = image_embeds.repeat(1, repeat_by, 1)
+        image_embeds = image_embeds.view(bs_embed * repeat_by, seq_len, -1)
+        image_embeds = image_embeds.squeeze(1)
+    
+        if do_classifier_free_guidance:
+            negative_prompt_embeds = torch.zeros_like(image_embeds)
+    
+            # For classifier free guidance, we need to do two forward passes.
+            # Here we concatenate the unconditional and text embeddings into a single batch
+            # to avoid doing two forward passes
+            image_embeds = torch.cat([negative_prompt_embeds, image_embeds])
+
+        return image_embeds
+    
+    
     @torch.no_grad()
     def get_text_embeds(self, prompt):
-        """
-        prompt: [str] Text prompt
-        """
-        embeddings = self.audio_model.forward({ib.ModalityType.TEXT: ib.load_and_transform_text([prompt], self.device),}, normalize=False)
-        text_embeddings = embeddings[ib.ModalityType.TEXT]
-        return text_embeddings
+        # prompt: [str]
+
+        inputs = self.tokenizer(prompt, padding='max_length', max_length=self.tokenizer.model_max_length, return_tensors='pt')
+        embeddings = self.text_encoder(inputs.input_ids.to(self.device))[0]
+
+        return embeddings
     
     @torch.no_grad()
     def get_audio_embeds(self, prompt):
         """
         prompt: [str] audio path
         """
-        embeddings = self.audio_model.forward({ib.ModalityType.AUDIO: ib.load_and_transform_audio_data(prompt, self.device),})
+        embeddings = self.audio_model.forward({
+            ib.ModalityType.AUDIO: ib.load_and_transform_audio_data(
+                prompt, self.device),})
         embeddings = embeddings[ib.ModalityType.AUDIO]
-        return embeddings
+        
+        image_embeds = self._encode_image(
+            image_embeds=embeddings.half()
+        )
+        return image_embeds
         
 
 
-    def train_step(self, text_embeddings, pred_rgb, guidance_scale=100, as_latent=False, grad_scale=1,
+    def train_step(self, audio_embeds, text_embeddings, pred_rgb, guidance_scale=100, as_latent=False, grad_scale=1,
                    save_guidance_path:Path=None):
 
         if as_latent:
@@ -101,7 +170,10 @@ class AudioStableDiffusion(nn.Module):
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
             tt = torch.cat([t] * 2)
-            noise_pred = self.unet(latent_model_input, tt, encoder_hidden_states=text_embeddings).sample
+            noise_pred = self.unet(latent_model_input, 
+                                   tt, 
+                                   encoder_hidden_states=text_embeddings,
+                                   class_labels=audio_embeds).sample
 
             # perform guidance (high scale from paper!)
             noise_pred_uncond, noise_pred_pos = noise_pred.chunk(2)
@@ -159,7 +231,7 @@ class AudioStableDiffusion(nn.Module):
         return loss
     
 
-    def train_step_perpneg(self, text_embeddings, weights, pred_rgb, guidance_scale=100, as_latent=False, grad_scale=1,
+    def train_step_perpneg(self, audio_embeds, text_embeddings, weights, pred_rgb, guidance_scale=100, as_latent=False, grad_scale=1,
                    save_guidance_path:Path=None):
 
         B = pred_rgb.shape[0]

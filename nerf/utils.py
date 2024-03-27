@@ -357,7 +357,11 @@ class Trainer(object):
 
             # Addition {Ariel}
             if 'audio' in self.guidance:
-                self.embeddings['audio']['default'] = self.guidance['audio'].get_audio_embeds([self.opt.audio])
+                self.embeddings['audio']['default'] = self.guidance['audio'].get_text_embeds([self.opt.text])
+                self.embeddings['audio']['uncond'] = self.guidance['audio'].get_text_embeds([self.opt.negative])
+
+                self.audio_embeddings = self.guidance['audio'].get_audio_embeds([self.opt.audio])
+
                 for d in ['front', 'side', 'back']:
                     self.embeddings['audio'][d] = self.guidance['audio'].get_text_embeds([f"{self.opt.text}, {d} view"])
 
@@ -635,6 +639,44 @@ class Trainer(object):
                                                     save_guidance_path=save_guidance_path)
                 else:
                     loss = loss + self.guidance['SD'].train_step(text_z, pred_rgb, as_latent=as_latent, guidance_scale=self.opt.guidance_scale, grad_scale=self.opt.lambda_guidance,
+                                                                save_guidance_path=save_guidance_path)
+            
+            if 'audio' in self.guidance:
+                # interpolate text_z
+                azimuth = data['azimuth'] # [-180, 180]
+
+                # ENHANCE: remove loop to handle batch size > 1
+                text_z = [self.embeddings['audio']['uncond']] * azimuth.shape[0]
+                if self.opt.perpneg:
+
+                    text_z_comp, weights = adjust_text_embeddings(self.embeddings['audio'], azimuth, self.opt)
+                    text_z.append(text_z_comp)
+
+                else:                
+                    for b in range(azimuth.shape[0]):
+                        if azimuth[b] >= -90 and azimuth[b] < 90:
+                            if azimuth[b] >= 0:
+                                r = 1 - azimuth[b] / 90
+                            else:
+                                r = 1 + azimuth[b] / 90
+                            start_z = self.embeddings['audio']['front']
+                            end_z = self.embeddings['audio']['side']
+                        else:
+                            if azimuth[b] >= 0:
+                                r = 1 - (azimuth[b] - 90) / 90
+                            else:
+                                r = 1 + (azimuth[b] + 90) / 90
+                            start_z = self.embeddings['audio']['side']
+                            end_z = self.embeddings['audio']['back']
+                        text_z.append(r * start_z + (1 - r) * end_z)
+
+                text_z = torch.cat(text_z, dim=0)
+                audio_embeds = self.audio_embeddings
+                if self.opt.perpneg:
+                    loss = loss + self.guidance['audio'].train_step_perpneg(audio_embeds, text_z, weights, pred_rgb, as_latent=as_latent, guidance_scale=self.opt.guidance_scale, grad_scale=self.opt.lambda_guidance,
+                                                    save_guidance_path=save_guidance_path)
+                else:
+                    loss = loss + self.guidance['audio'].train_step(audio_embeds, text_z, pred_rgb, as_latent=as_latent, guidance_scale=self.opt.guidance_scale, grad_scale=self.opt.lambda_guidance,
                                                                 save_guidance_path=save_guidance_path)
 
             if 'IF' in self.guidance:
