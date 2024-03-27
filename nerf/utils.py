@@ -603,7 +603,34 @@ class Trainer(object):
         else:
 
             loss = 0
+            # Add {Ariel}
+            if 'audio' in self.guidance:
+                # interpolate text_z
+                azimuth = data['azimuth'] # [-180, 180]
+                text_z = text_z = [self.embeddings['audio']['default']] * azimuth.shape[0]
+                for b in range(azimuth.shape[0]):
+                    if azimuth[b] >= -90 and azimuth[b] < 90:
+                        if azimuth[b] >= 0:
+                            r = 1 - azimuth[b] / 90
+                        else:
+                            r = 1 + azimuth[b] / 90    
+                        start_z = self.embeddings['audio']['front']
+                        end_z = self.embeddings['audio']['side']
+                    else:
+                        if azimuth[b] >= 0:
+                            r = 1 - (azimuth[b] - 90) / 90
+                        else:
+                            r = 1 + (azimuth[b] + 90) / 90
+                        start_z = self.embeddings['audio']['side']
+                        end_z = self.embeddings['audio']['back']
 
+                    text_z.append(r * start_z + (1 - r) * end_z)
+                text_z = torch.cat(text_z, dim=0)
+                loss = loss + self.guidance['audio'].train_step(text_z, pred_rgb, as_latent=as_latent, guidance_scale=self.opt.guidance_scale, grad_scale=self.opt.lambda_guidance,
+                                                                save_guidance_path=save_guidance_path)
+                        
+                
+                
             if 'SD' in self.guidance:
                 # interpolate text_z
                 azimuth = data['azimuth'] # [-180, 180]
@@ -632,6 +659,7 @@ class Trainer(object):
                             start_z = self.embeddings['SD']['side']
                             end_z = self.embeddings['SD']['back']
                         text_z.append(r * start_z + (1 - r) * end_z)
+                        
 
                 text_z = torch.cat(text_z, dim=0)
                 if self.opt.perpneg:
