@@ -132,19 +132,19 @@ class AudioStableDiffusion(nn.Module):
         return embeddings
     
     @torch.no_grad()
-    def get_audio_embeds(self, prompt):
+    def get_audio_embeds(self, prompt, w_decay=0.15):
         """
         prompt: [str] audio path
         """
         embeddings = self.audio_model.forward({
             ib.ModalityType.AUDIO: ib.load_and_transform_audio_data(
                 prompt, self.device),})
-        embeddings = embeddings[ib.ModalityType.AUDIO]
+        embeddings = w_decay * embeddings[ib.ModalityType.AUDIO]
         
-        image_embeds = self._encode_image(
-            image_embeds=embeddings.half()
-        )
-        return image_embeds
+        # image_embeds = self._encode_image(
+        #     image_embeds=embeddings.half()
+        # )
+        return embeddings
         
 
 
