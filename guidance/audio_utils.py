@@ -141,10 +141,10 @@ class AudioStableDiffusion(nn.Module):
                 prompt, self.device),})
         embeddings = w_decay * embeddings[ib.ModalityType.AUDIO]
         
-        # image_embeds = self._encode_image(
-        #     image_embeds=embeddings.half()
-        # )
-        return embeddings
+        image_embeds = self._encode_image(
+            image_embeds=embeddings.half()
+        )
+        return image_embeds
         
 
 
