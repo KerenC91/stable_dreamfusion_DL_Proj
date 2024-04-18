@@ -30,9 +30,9 @@ def seed_everything(seed):
     #torch.backends.cudnn.benchmark = True
 
 class AudioStableDiffusion(nn.Module):
-    def __init__(self, device, fp16, vram_O, sd_version='2.1', hf_key=None, t_range=[0.02, 0.98]):
+    def __init__(self, device, fp16, vram_O, sd_version='2.1', hf_key=None, t_range=[0.02, 0.98], only_text_flag="No"):
         super().__init__()
-
+        self.only_text_flag = only_text_flag
         self.device = device
         self.sd_version = sd_version
         model_key = "stabilityai/stable-diffusion-2-1-unclip"
@@ -170,10 +170,16 @@ class AudioStableDiffusion(nn.Module):
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
             tt = torch.cat([t] * 2)
-            noise_pred = self.unet(latent_model_input, 
-                                   tt, 
-                                   encoder_hidden_states=text_embeddings,
-                                   class_labels=audio_embeds).sample
+            if self.only_text_flag == "Yes":
+                noise_pred = self.unet(latent_model_input, 
+                                tt, 
+                                encoder_hidden_states=text_embeddings).sample
+            
+            else:
+                noise_pred = self.unet(latent_model_input, 
+                                tt, 
+                                encoder_hidden_states=text_embeddings,
+                                class_labels=audio_embeds).sample
 
             # perform guidance (high scale from paper!)
             noise_pred_uncond, noise_pred_pos = noise_pred.chunk(2)

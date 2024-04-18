@@ -638,8 +638,7 @@ class Trainer(object):
                     loss = loss + self.guidance['audio'].train_step_perpneg(audio_embeds, text_z, weights, pred_rgb, as_latent=as_latent, guidance_scale=self.opt.guidance_scale, grad_scale=self.opt.lambda_guidance,
                                                     save_guidance_path=save_guidance_path)
                 else:
-                    loss = loss + self.guidance['audio'].train_step(audio_embeds, text_z, pred_rgb, as_latent=as_latent, guidance_scale=self.opt.guidance_scale, grad_scale=self.opt.lambda_guidance,
-                                                                save_guidance_path=save_guidance_path)
+                    loss = loss + self.guidance['audio'].train_step(audio_embeds, text_z, pred_rgb, as_latent=as_latent, guidance_scale=self.opt.guidance_scale, grad_scale=self.opt.lambda_guidance, save_guidance_path=save_guidance_path)
 
  
             if 'SD' in self.guidance:

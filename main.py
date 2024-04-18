@@ -169,7 +169,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--exp_start_iter', type=int, default=None, help="start iter # for experiment, to calculate progressive_view and progressive_level")
     parser.add_argument('--exp_end_iter', type=int, default=None, help="end iter # for experiment, to calculate progressive_view and progressive_level")
-
+    # Addind options
+    parser.add_argument('--only_text', type=str, default="No", help="apply bindig guidance only with text options No/Yes, No-defualt ")
     opt = parser.parse_args()
 
     if opt.O:
@@ -399,7 +400,7 @@ if __name__ == '__main__':
         # Add out guidance
         if 'audio' in opt.guidance:
             from guidance.audio_utils import AudioStableDiffusion
-            guidance['audio'] = AudioStableDiffusion(device, opt.fp16, opt.vram_O, opt.sd_version, opt.hf_key, opt.t_range)
+            guidance['audio'] = AudioStableDiffusion(device, opt.fp16, opt.vram_O, opt.sd_version, opt.hf_key, opt.t_range, opt.only_text)
             # opt.text = "pass"
             
 

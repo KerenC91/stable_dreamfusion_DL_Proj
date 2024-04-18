@@ -3,11 +3,6 @@ import torch
 from diffusers import StableUnCLIPImg2ImgPipeline
 
 
-torch.manual_seed(0)
-torch.cuda.manual_seed(0)
-
-
-
 # construct models
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(
@@ -31,6 +26,6 @@ with torch.no_grad():
     w = 0.85
     # embeddings = (1 - w) * audio_embeddings + w * img_embeddings
     embeddings = (1 - w) * audio_embeddings
-    images = pipe(prompt='a DSLR photo of a flamingo, back view', image_embeds=embeddings.half()).images
+    images = pipe(prompt='a DSLR photo of a flamingo, front view', image_embeds=embeddings.half()).images
     # Save results
     images[0].save("audiotext2img2_(front0).png")
