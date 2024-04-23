@@ -16,16 +16,16 @@ with torch.no_grad():
     # Audio embedding 
     embeddings = model.forward({ib.ModalityType.AUDIO: ib.load_and_transform_audio_data(audio_paths, device),})
     audio_embeddings = embeddings[ib.ModalityType.AUDIO]
-    # # Text embedding
-    # embeddings = model.forward({ib.ModalityType.TEXT: ib.load_and_transform_text(['a photo of a bird, fron_view'], device),}, normalize=False)
-    # text_embeddings = embeddings[ib.ModalityType.TEXT]
-    # Image embedding 
-    embeddings = model.forward({ib.ModalityType.VISION: ib.load_and_transform_vision_data(["image_files/flamingo.jpg"], device),})
-    img_embeddings = embeddings[ib.ModalityType.VISION]
     # Combina embedding and generate image
-    w = 0.85
+    w = 0.15
     # embeddings = (1 - w) * audio_embeddings + w * img_embeddings
-    embeddings = (1 - w) * audio_embeddings
-    images = pipe(prompt='a DSLR photo of a flamingo, front view', image_embeds=embeddings.half()).images
+    embeddings = w * audio_embeddings
+    images = pipe(prompt='a DSLR photo of a flamingo, front view', 
+                  height=512,
+                  width=512,
+                  guidance_scale=13,
+                  num_inference_steps=50,
+                  generator=torch.Generator(device=device).manual_seed(42),
+                  image_embeds=embeddings.half()).images
     # Save results
-    images[0].save("audiotext2img2_(front0).png")
+    images[0].save("audiotext2img2_withPipe.png")

@@ -2,12 +2,12 @@ import anything2image.imagebind as ib
 import torch
 from diffusers import StableUnCLIPImg2ImgPipeline, DDIMScheduler
 import matplotlib.pyplot as plt
-
+from PIL import Image
 
 @torch.no_grad()
 def get_text_embedding(prompt, pipe):
     # Tokenize
-    inputs = pipe.tokenizer(text_prompt, padding='max_length', max_length=pipe.tokenizer.model_max_length, return_tensors='pt')
+    inputs = pipe.tokenizer(prompt, padding='max_length', max_length=pipe.tokenizer.model_max_length, return_tensors='pt')
     # Encode tokenizer to text embedding
     text_embeddings = pipe.text_encoder(inputs.input_ids.to(device))[0]
     return text_embeddings
@@ -22,10 +22,10 @@ pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(
 model = ib.imagebind_huge(pretrained=True).eval().to(device)
 audio_paths=["audio_files/wave.wav"]
 text_prompt = "a DSLR photo of a flamingo, front view"
-guidance_scale = 13
-num_inference_steps = 30
+guidance_scale = 19
+num_inference_steps = 50
 generator=torch.Generator(device=device).manual_seed(42)
-w_audio = 0.15
+w_audio = 0.18
 
 # Embedding audio 
 with torch.no_grad():
@@ -72,10 +72,18 @@ for i, t in enumerate(pipe.scheduler.timesteps):
     # Compute the previous noisy sample x_t -> x_t-1
     latents = pipe.scheduler.step(noise_pred, t, latents).prev_sample
 
+# scale and decode the image latents with vae
+# latents = 1 / 0.18215 * latents
 # Decode the resulting latents into an image
 with torch.no_grad():
+    # image = pipe.vae.decode(latents).sample
     image = pipe.decode_latents(latents.detach())
 
 # Save results
 image = pipe.numpy_to_pil(image)[0]
 image.save("audiotext2img2_(front0).png")
+# image = (image / 2 + 0.5).clamp(0, 1)
+# image = image.detach().cpu().permute(0, 2, 3, 1).numpy()
+# images = (image * 255).round().astype("uint8")
+# pil_images = [Image.fromarray(image) for image in images]
+# pil_images[0].save("audiotext2img2_WithoutPipe.png")
