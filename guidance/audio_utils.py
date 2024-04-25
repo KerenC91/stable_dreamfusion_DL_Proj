@@ -30,11 +30,13 @@ def seed_everything(seed):
     #torch.backends.cudnn.benchmark = True
 
 class AudioStableDiffusion(nn.Module):
-    def __init__(self, device, fp16, vram_O, sd_version='2.1', hf_key=None, t_range=[0.02, 0.98], only_text_flag="No"):
+    def __init__(self, device, fp16, vram_O, sd_version='2.1', hf_key=None, t_range=[0.02, 0.98], only_text_flag="No", audio_prompt="audio_files/wave.wav"):
         super().__init__()
         self.only_text_flag = only_text_flag
         self.device = device
         self.sd_version = sd_version
+        self.audio_prompt = audio_prompt
+        self.generator=torch.Generator(device=device).manual_seed(42)
         model_key = "stabilityai/stable-diffusion-2-1-unclip"
         print(f'[INFO] loading Audio stable diffusion...')
 
@@ -66,19 +68,17 @@ class AudioStableDiffusion(nn.Module):
 
     def _encode_image(
         self,
+        image,
+        device,
+        batch_size,
+        num_images_per_prompt,
+        do_classifier_free_guidance,
+        noise_level,
+        generator,
         image_embeds,
-        image: Union[torch.FloatTensor, PIL.Image.Image] = None,
-        batch_size: Optional[int] = 1,
-        num_images_per_prompt: Optional[int] = 1,
-        do_classifier_free_guidance: Optional[bool] = True,
-        noise_level: int = 0,
-        generator: Optional[torch.Generator] = None,
     ):
-        device = self.device
-        batch_size = batch_size * num_images_per_prompt
-        
         dtype = next(self.image_encoder.parameters()).dtype
-    
+
         if isinstance(image, PIL.Image.Image):
             # the image embedding should repeated so it matches the total batch size of the prompt
             repeat_by = batch_size
@@ -90,30 +90,30 @@ class AudioStableDiffusion(nn.Module):
             # `image_embeds`. If those happen to be common use cases, let's think harder about
             # what the expected dimensions of inputs should be and how we handle the encoding.
             repeat_by = num_images_per_prompt
-    
+
         if image_embeds is None:
             if not isinstance(image, torch.Tensor):
                 image = self.feature_extractor(images=image, return_tensors="pt").pixel_values
-    
+
             image = image.to(device=device, dtype=dtype)
             image_embeds = self.image_encoder(image).image_embeds
-    
+
         image_embeds = self.noise_image_embeddings(
             image_embeds=image_embeds,
             noise_level=noise_level,
             generator=generator,
         )
-    
+
         # duplicate image embeddings for each generation per prompt, using mps friendly method
         image_embeds = image_embeds.unsqueeze(1)
         bs_embed, seq_len, _ = image_embeds.shape
         image_embeds = image_embeds.repeat(1, repeat_by, 1)
         image_embeds = image_embeds.view(bs_embed * repeat_by, seq_len, -1)
         image_embeds = image_embeds.squeeze(1)
-    
+
         if do_classifier_free_guidance:
             negative_prompt_embeds = torch.zeros_like(image_embeds)
-    
+
             # For classifier free guidance, we need to do two forward passes.
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
@@ -132,7 +132,7 @@ class AudioStableDiffusion(nn.Module):
         return embeddings
     
     @torch.no_grad()
-    def get_audio_embeds(self, prompt, w_decay=0.15):
+    def get_audio_embeds(self, prompt, w_decay=0.18):
         """
         prompt: [str] audio path
         """
@@ -141,9 +141,14 @@ class AudioStableDiffusion(nn.Module):
                 prompt, self.device),})
         embeddings = w_decay * embeddings[ib.ModalityType.AUDIO]
         
-        image_embeds = self._encode_image(
-            image_embeds=embeddings.half()
-        )
+        image_embeds = self._encode_image(image=None,
+                                          device=self.device,
+                                          batch_size=1,
+                                          num_images_per_prompt=1,
+                                          do_classifier_free_guidance=True,
+                                          noise_level=0,
+                                          generator=self.generator,
+                                          image_embeds=embeddings.half())
         return image_embeds
         
 
@@ -322,10 +327,10 @@ class AudioStableDiffusion(nn.Module):
 
 
     @torch.no_grad()
-    def produce_latents(self, text_embeddings, height=512, width=512, num_inference_steps=50, guidance_scale=7.5, latents=None):
+    def produce_latents(self, text_embeddings, height=512, width=512, num_inference_steps=50, guidance_scale=19, latents=None):
 
         if latents is None:
-            latents = torch.randn((text_embeddings.shape[0] // 2, self.unet.in_channels, height // 8, width // 8), device=self.device)
+            latents = torch.randn((text_embeddings.shape[0] // 2, self.unet.in_channels, height // 8, width // 8), device=self.device, generator=self.generator)
 
         self.scheduler.set_timesteps(num_inference_steps)
 
@@ -363,7 +368,7 @@ class AudioStableDiffusion(nn.Module):
 
         return latents
 
-    def prompt_to_img(self, prompts, negative_prompts='', height=512, width=512, num_inference_steps=50, guidance_scale=7.5, latents=None):
+    def prompt_to_img(self, prompts, negative_prompts='', height=512, width=512, num_inference_steps=50, guidance_scale=19, latents=None):
 
         if isinstance(prompts, str):
             prompts = [prompts]
@@ -405,13 +410,14 @@ if __name__ == '__main__':
     parser.add_argument('-W', type=int, default=512)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--steps', type=int, default=50)
+    parser.add_argument('--audio', default="../audio_files/wave.wav", help="audio file path")
     opt = parser.parse_args()
 
     seed_everything(opt.seed)
 
     device = torch.device('cuda')
 
-    audio = AudioStableDiffusion(device, opt.fp16, opt.vram_O, opt.sd_version, opt.hf_key)
+    audio = AudioStableDiffusion(device, opt.fp16, opt.vram_O, opt.sd_version, opt.hf_key, opt.audio)
 
     imgs = audio.prompt_to_img(opt.prompt, opt.negative, opt.H, opt.W, opt.steps)
 

@@ -20,8 +20,8 @@ pipe = StableUnCLIPImg2ImgPipeline.from_pretrained(
 
 # Define imagebinds and guidnace parameters
 model = ib.imagebind_huge(pretrained=True).eval().to(device)
-audio_paths=["audio_files/wave.wav"]
-text_prompt = "a DSLR photo of a flamingo, front view"
+audio_paths=["audio_files/bird_audio.wav"]
+text_prompt = "a DSLR photo of a bird, front view"
 guidance_scale = 19
 num_inference_steps = 50
 generator=torch.Generator(device=device).manual_seed(42)
@@ -73,17 +73,18 @@ for i, t in enumerate(pipe.scheduler.timesteps):
     latents = pipe.scheduler.step(noise_pred, t, latents).prev_sample
 
 # scale and decode the image latents with vae
-# latents = 1 / 0.18215 * latents
+latents = 1 / 0.18215 * latents
+print(f"scailing factor = {pipe.vae.config.scaling_factor}")
 # Decode the resulting latents into an image
 with torch.no_grad():
-    # image = pipe.vae.decode(latents).sample
-    image = pipe.decode_latents(latents.detach())
+    image = pipe.vae.decode(latents).sample
+    # image = pipe.decode_latents(latents.detach())
 
 # Save results
-image = pipe.numpy_to_pil(image)[0]
-image.save("audiotext2img2_(front0).png")
-# image = (image / 2 + 0.5).clamp(0, 1)
-# image = image.detach().cpu().permute(0, 2, 3, 1).numpy()
-# images = (image * 255).round().astype("uint8")
-# pil_images = [Image.fromarray(image) for image in images]
-# pil_images[0].save("audiotext2img2_WithoutPipe.png")
+# image = pipe.numpy_to_pil(image)[0]
+# image.save("audiotext2img2_(front0).png")
+image = (image / 2 + 0.5).clamp(0, 1)
+image = image.detach().cpu().permute(0, 2, 3, 1).numpy()
+images = (image * 255).round().astype("uint8")
+pil_images = [Image.fromarray(image) for image in images]
+pil_images[0].save("audiotext2img2_WithoutPipe.png")
